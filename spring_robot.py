@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 import matplotlib.animation as animation
 from enum import Enum
+from math import floor
 
 
 sp.init_printing()
@@ -116,15 +117,25 @@ class Mode(Enum):
     Constrained = 2
 
 simulationMode = Mode.Constrained
-y = np.array([0,0,0.6,np.pi/2,0,0,0,0,0,0],'float64')
-sola = np.zeros(shape=(1001,10), dtype='float64')
 
-for t in range(1,400):
+sim_time = 0.5
+dt = 0.001
+n_samples = floor(sim_time/dt)
+
+y = np.array([0,0,0.6,np.pi/2,0,0,0,0,0,0,0,0],'float64')
+t = 0
+sola = np.zeros(shape=(n_samples, 12), dtype='float64')
+sola_t = np.zeros(n_samples)
+
+for k in range(1,n_samples):
     print(t)
+    t = t + dt
+    sola_t[k] = t
 
     if simulationMode == Mode.Free:
         pc_pos = pc_func(y[0],y[1],y[2],y[3],y[4])
-        if pc_pos[1] <= -0.65:
+        if pc_pos[1] <= -0.61:
+            print("fsd")
             # Handle contact impulse dynamics
             simulationMode == Mode.Constrained
             Ms = MMat_func(y[0],y[1],y[2],y[3],y[4])
@@ -141,20 +152,25 @@ for t in range(1,400):
         # Torque for nth variable need to be offset by velocity variables (5+n)
         FF[7] += (y[2] - 0.8) * 300
         result = np.linalg.solve(MM,FF)
-        y = y + np.squeeze(result[:10]) * np.float64(0.005) 
-        sola[t,:] = y
+        y[:10] = y[:10] + np.squeeze(result[:10]) * np.float64(0.005) 
+        y[-3:-1] = np.squeeze(result[10:12])
+        sola[k,:] = y
         if result[-1] < 0:
             simulationMode = Mode.Free
-            print('asd')
-        
     else:
         MM = MM_nc_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
         FF = F_nc_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
         FF[7] += (y[2] - 0.8) * 11
         result = np.linalg.solve(MM,FF)
-        y = y + np.squeeze(result) * np.float64(0.005) 
-        sola[t,:] = y
+        y[:10] = y[:10] + np.squeeze(result[:10]) * np.float64(0.005)
+        y[-3:-1] = np.array([0,0])
+        sola[k,:] = y
 
+
+# Quick plotting data
+plt.plot(sola_t, sola[:,-1])
+plt.plot(sola_t, sola[:,-2])
+plt.show()
 
 
 # Animation/Visualization
