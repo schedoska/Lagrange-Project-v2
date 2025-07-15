@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 import matplotlib.animation as animation
+from enum import Enum
 
 
 sp.init_printing()
@@ -27,8 +28,10 @@ p2 = sp.Matrix([x+sp.cos(theta)*l, y+sp.sin(theta)*l])
 p2d = sp.diff(p2, t)
 p3 = sp.Matrix([x-sp.cos(q2+theta)*q1*0.5, y-sp.sin(q2+theta)*q1*0.5])
 p3d = sp.diff(p3, t)
+
 # point of feet contact
 pc = sp.Matrix([x-sp.cos(q2+theta)*q1, y-sp.sin(q2+theta)*q1])
+pc_func = sp.lambdify([x,y,q1,q2,theta], pc, 'numpy')
 
 
 K = 0.5 * m * (p1d.transpose() * p1d + p2d.transpose() * p2d) +\
@@ -40,7 +43,7 @@ V = g * m * (p1[1] + p2[1]) + g * m2 * p3[1]
 fc1 = pc[0]  
 fc2 = pc[1] 
 # Jacobian
-J = p1.jacobian([x,y,q1,q2,theta])
+J = pc.jacobian([x,y,q1,q2,theta])
 
 # Lagrangian
 L = sp.simplify(K-V)
@@ -61,7 +64,7 @@ for qi in [x,y,q1,q2,theta]:
 eqs.append(sp.diff(fc1,t,2))
 eqs.append(sp.diff(fc2,t,2))
 
-eqs = [eq.subs({
+sub_dic = {
     sp.diff(x, t, 2): ddx,
     sp.diff(y, t, 2): ddy,
     sp.diff(q1, t, 2): ddq1,
@@ -71,8 +74,26 @@ eqs = [eq.subs({
     sp.diff(y, t): dy,
     sp.diff(q1, t): dq1,
     sp.diff(q2, t): dq2,
-    sp.diff(theta, t): dtheta}) for eq in eqs]
+    sp.diff(theta, t): dtheta}
+eqs = [eq.subs(sub_dic) for eq in eqs]
 
+# Equations of motion without any constraints 
+eqs_nc = [eq.subs({lam1: 0, lam2: 0}) for eq in eqs]
+eqs_nc = eqs_nc[:-2]
+
+# ---------------- Non-constrained model (no contact) ----------------
+# convert differential equation into lineary set of equation
+sol = sp.linear_eq_to_matrix(eqs_nc, [ddx, ddy, ddq1,  ddq2,  ddtheta])
+# transform from 2nd order ot 1st order eqs
+q_size = dvars.shape[0] # num of variables (dof)
+MM_nc_sym = sp.Matrix([[sp.eye(q_size),sp.zeros(q_size, sol[0].shape[1])],
+                    [sp.zeros(sol[0].shape[1], q_size), sol[0]]])
+F_nc_sym = sp.Matrix([[dvars],[sol[1]]])
+MM_nc_func = sp.lambdify([x,y,q1,q2,theta,dx,dy,dq1,dq2,dtheta], MM_nc_sym, 'numpy')
+F_nc_func = sp.lambdify([x,y,q1,q2,theta,dx,dy,dq1,dq2,dtheta], F_nc_sym, 'numpy')
+
+
+# ---------------- Constrained model (feet touching ground) ----------------
 # convert differential equation into lineary set of equation
 sol = sp.linear_eq_to_matrix(eqs, [ddx, ddy, ddq1,  ddq2,  ddtheta, lam1, lam2])
 # transform from 2nd order ot 1st order eqs
@@ -90,18 +111,49 @@ JMat_func = sp.lambdify(vars, J, 'numpy')
 
 
 # Temporal Euler solver
-y = np.array([0,0,0.6,np.pi/2,0,0,0,0,0,0,0,0],'float64')
-sola = np.zeros(shape=(1001,12), dtype='float64')
+class Mode(Enum):
+    Free = 1
+    Constrained = 2
+
+simulationMode = Mode.Constrained
+y = np.array([0,0,0.6,np.pi/2,0,0,0,0,0,0],'float64')
+sola = np.zeros(shape=(1001,10), dtype='float64')
+
 for t in range(1,400):
     print(t)
-    MM = MM_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
-    FF = F_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
-    # Torque for nth variable need to be offset by velocity variables (5+n)
-    FF[7] += (y[1]) * 50
-    result = np.linalg.solve(MM,FF)
-    print(np.squeeze(result))
-    y = y + np.squeeze(result) * np.float64(0.005) 
-    sola[t,:] = y
+
+    if simulationMode == Mode.Free:
+        pc_pos = pc_func(y[0],y[1],y[2],y[3],y[4])
+        if pc_pos[1] <= -0.65:
+            # Handle contact impulse dynamics
+            simulationMode == Mode.Constrained
+            Ms = MMat_func(y[0],y[1],y[2],y[3],y[4])
+            Js = JMat_func(y[0],y[1],y[2],y[3],y[4])
+            q_old = y[q_size : 2*q_size]
+            impactSigma = np.matmul(np.matmul(Js, np.linalg.inv(Ms)), np.transpose(Js))
+            impactSigma = np.matmul(np.matmul(-np.linalg.inv(impactSigma), Js), q_old)
+            q_new = q_old + np.matmul(np.matmul(np.linalg.inv(Ms), np.transpose(Js)), impactSigma)
+            y[q_size : 2*q_size] = q_new
+
+    if simulationMode == Mode.Constrained:
+        MM = MM_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
+        FF = F_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
+        # Torque for nth variable need to be offset by velocity variables (5+n)
+        FF[7] += (y[2] - 0.8) * 300
+        result = np.linalg.solve(MM,FF)
+        y = y + np.squeeze(result[:10]) * np.float64(0.005) 
+        sola[t,:] = y
+        if result[-1] < 0:
+            simulationMode = Mode.Free
+            print('asd')
+        
+    else:
+        MM = MM_nc_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
+        FF = F_nc_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
+        FF[7] += (y[2] - 0.8) * 11
+        result = np.linalg.solve(MM,FF)
+        y = y + np.squeeze(result) * np.float64(0.005) 
+        sola[t,:] = y
 
 
 
@@ -110,7 +162,7 @@ fig, ax = plt.subplots()
 line, = ax.plot([], [], 'o-', lw=2)
 line2, = ax.plot([], [], 'o-', lw=2)
 ax.set_xlim(left=-0.7,right=0.7)
-ax.set_ylim(top=.5,bottom=-1.5)
+ax.set_ylim(top=1.5,bottom=-1)
 ax.set_aspect('equal')
 
 lp = 0.2
@@ -135,5 +187,5 @@ def animate(i):
     return (line,line2)
 
 ani = animation.FuncAnimation(
-    fig, animate, len(sola[:,0]), interval=10, blit=False)
+    fig, animate, len(sola[:,0]), interval=30, blit=False)
 plt.show()
