@@ -111,6 +111,15 @@ MMat_func = sp.lambdify(vars, MMat, 'numpy')
 JMat_func = sp.lambdify(vars, J, 'numpy')
 
 
+
+
+      
+
+    
+
+
+
+
 # Temporal Euler solver
 class Mode(Enum):
     Free = 1
