@@ -127,6 +127,14 @@ class LegHopperModel:
             raise ValueError("Wrong number of state variables. Expected from 10 to 12.")
         self.state[:array_len] = state
 
+    def get_feet_position(self):
+        y = self.state
+        return self.pc_func(y[0],y[1],y[2],y[3],y[4])
+    
+    def get_feet_velocity(self):
+        y = self.state
+        return self.pcd_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
+
     def advance(self, dt: np.float64, control: np.ndarray):
         y = self.state
         if self.mode == LegHopperModel.Mode.Air:
@@ -136,8 +144,8 @@ class LegHopperModel:
             result = np.linalg.solve(MM,FF)
             self.state[:10] = y[:10] + np.squeeze(result[:10]) * dt
             self.state[-3:-1] = np.array([0,0])
-            pc = self.pc_func(y[0],y[1],y[2],y[3],y[4])
-            pcd = self.pcd_func(y[0],y[1],y[2],y[3],y[4],y[5],y[6],y[7],y[8],y[9])
+            pc = self.get_feet_positiontion()
+            pcd = self.get_feet_velocity()
             if pc[1] <= -0.6 and pcd[1] <= 0:
                 self.handle_contact_impact()
                 self.mode = LegHopperModel.Mode.Constrained
